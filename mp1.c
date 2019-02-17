@@ -5,6 +5,8 @@
 #include <linux/proc_fs.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/timer.h>
+#include <linux/jiffies.h>
 #include <asm/uaccess.h>
 #include "mp1_given.h"
 
@@ -32,6 +34,13 @@ struct registration_block {
 // Declare a linked list to store the registered process information
 // Initialize the empty linked list
 LIST_HEAD(registration_list);
+
+// Declare the timer callback function
+static void timer_handler(unsigned long data);
+// Declare the staic variable to timeout five seconds
+static unsigned long five_sec;
+// Declare the global kernel timer
+DEFINE_TIMER(update_timer, timer_handler, 0, 0);
 
 #define MAX_BUF_SIZE 4096
 // Decalre the callback functions for proc read and write
@@ -87,7 +96,8 @@ ssize_t register_pid(struct file *file,
 	   printk(KERN_ALERT "Repeated pid number\n");
 	   return -EFAULT;
        }
-   }
+    }
+
     // Allocate a new block to store the result
     new_block_ptr = kmalloc(sizeof(*new_block_ptr), GFP_KERNEL);
     new_block_ptr->pid = (int)pid_val;
@@ -149,6 +159,13 @@ static const struct file_operations mp1_proc_fops = {
     .read = get_status,
 };
 
+// Timer updating handler
+static void timer_handler(unsigned long data) {
+    unsigned long j = jiffies;
+    printk(KERN_DEBUG "time handling here %lu\n", j);
+
+    mod_timer(&update_timer, jiffies + five_sec);
+}
 
 // Work function for workqueue to schedule
 
@@ -163,7 +180,10 @@ int __init mp1_init(void)
    mp1_dir = proc_mkdir(MP1_DIR, NULL); 
    // Make a new proc entry /proc/mp1/status
    mp1_status = proc_create(MP1_STAT, 0666, mp1_dir, &mp1_proc_fops); 
-   
+   // Initialize the timeout delay 
+   five_sec = msecs_to_jiffies(5000 * 1);
+   mod_timer(&update_timer, jiffies + five_sec);
+
    printk(KERN_ALERT "MP1 MODULE LOADED\n");
    return 0;   
 }
