@@ -7,6 +7,8 @@
 #include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/jiffies.h>
+#include <linux/workqueue.h>
+#include <linux/mutex.h>
 #include <asm/uaccess.h>
 #include "mp1_given.h"
 
@@ -42,7 +44,45 @@ static unsigned long five_sec;
 // Declare the global kernel timer
 DEFINE_TIMER(update_timer, timer_handler, 0, 0);
 
+// Declare the workqueue
+static struct workqueue_struct *wq;
+// Define the workqueue name
+#define UPDATE_WQ "update_wq"
+// Declare work handler
+static void work_handler(struct work_struct *work_arg);
+
+// Decalre a mutex lock
+struct mutex access_lock;
+
 #define MAX_BUF_SIZE 4096
+// Register the pid, which means to return error if has repeated,
+// and return 0 if the adding pid to linked list successfully.
+// This function is wraping function without lock
+static int _register_pid(int pid_val, unsigned long used_time) {
+    // Linked list entry
+    struct registration_block* new_block_ptr;
+    struct registration_block* cur, * temp;
+
+    // Iterate the whole linked list to prevent insert repeated one of pid
+    list_for_each_entry_safe(cur, temp, &registration_list, next) {
+       // Access the entry and determine if the pid has been in the list
+       if (cur->pid == pid_val) {
+	   printk(KERN_ALERT "Repeated pid number\n");
+	   return -EFAULT;
+       }
+    }
+
+    // Allocate a new block to store the result
+    new_block_ptr = kmalloc(sizeof(*new_block_ptr), GFP_KERNEL);
+    new_block_ptr->pid = pid_val;
+    new_block_ptr->used_time = used_time;
+    INIT_LIST_HEAD(&new_block_ptr->next);
+    // Add the entry to the linked list to register
+    list_add(&new_block_ptr->next, &registration_list);
+
+    return 0;
+}
+
 // Decalre the callback functions for proc read and write
 // Write callback function for user space to write pid to the 
 // /proc/mp1/status file
@@ -55,9 +95,6 @@ ssize_t register_pid(struct file *file,
     // Variables used in the kstrtol()
     unsigned long pid_val, used_time;
     int ret;
-    // Linked list entry
-    struct registration_block* new_block_ptr;
-    struct registration_block* cur, * temp;
 
     // Using vmalloc() to allocate buffer for kernel space
     kern_buf = (char *)kmalloc(MAX_BUF_SIZE * sizeof(char), GFP_KERNEL);
@@ -74,6 +111,7 @@ ssize_t register_pid(struct file *file,
     kern_buf[n] = 0;
     printk(KERN_DEBUG "ECHO %s", kern_buf); 
 
+    // Convert the pid string to the integer type
     ret = kstrtoul(kern_buf, 10, &pid_val);
     if (ret != 0 || pid_val >= ((1<<16)-1)) {
 	printk(KERN_ALERT "Unrecognized pid number");
@@ -89,27 +127,29 @@ ssize_t register_pid(struct file *file,
 	return -EFAULT;
     }
 
-    // Iterate the whole linked list to prevent insert repeated one of pid
-    list_for_each_entry_safe(cur, temp, &registration_list, next) {
-       // Access the entry and determine if the pid has been in the list
-       if (cur->pid == (int)pid_val) {
-	   printk(KERN_ALERT "Repeated pid number\n");
-	   return -EFAULT;
-       }
-    }
-
-    // Allocate a new block to store the result
-    new_block_ptr = kmalloc(sizeof(*new_block_ptr), GFP_KERNEL);
-    new_block_ptr->pid = (int)pid_val;
-    new_block_ptr->used_time = used_time;
-    INIT_LIST_HEAD(&new_block_ptr->next);
-    // Add the entry to the linked list to register
-    list_add(&new_block_ptr->next, &registration_list);
+    // Lock
+    mutex_lock(&access_lock);
+    // Wraper function for registration
+    if (_register_pid((int)pid_val, used_time) != 0) 
+	return -EFAULT;
+    // Unlock
+    mutex_unlock(&access_lock);
 
     kfree(kern_buf);
     return n;
 }
 
+// Wraper function for reading callback to access the registration
+// linked list
+static void _get_status(int* length, char* kern_buf) {
+    // Linked list entry
+    struct registration_block* cur, * temp;
+    // Iterate the whole linked list to output to the user space read buf
+    list_for_each_entry_safe(cur, temp, &registration_list, next) {
+	*length += sprintf(kern_buf + *length, "PID[%d]: %lu\n", 
+				cur->pid, cur->used_time);
+    }
+}
 // Read callback function for user space to read the proc file in
 // /proc/mp1/status
 ssize_t get_status(struct file *file, 
@@ -119,26 +159,26 @@ ssize_t get_status(struct file *file,
     // Local variable to store the data would copy to user buffer
     char* kern_buf;
     int length = 0;
-    // Linked list entry
-    struct registration_block* cur, * temp;
 
-    // Using vmalloc() to allocate buffer for kernel space
+    // Using kmalloc() to allocate buffer for kernel space
     kern_buf = (char *)kmalloc(MAX_BUF_SIZE * sizeof(char), GFP_KERNEL);
     if (!kern_buf) 
 	return -ENOMEM;
     memset(kern_buf, 0, MAX_BUF_SIZE * sizeof(char));
 
-    // If the input str is larger than buffer, return zero
+    // If the input str is larger than buffer or 
+    // someone has read it to let offset pointer is not to 0, return zero
     if (n < MAX_BUF_SIZE || *ppos > 0) 
 	return 0;
 
-    // Iterate the whole linked list to output to the user space read buf
-    list_for_each_entry_safe(cur, temp, &registration_list, next) {
-	length += sprintf(kern_buf + length, "PID %d: %lu\n", 
-				cur->pid, cur->used_time);
-    }
-    
-    printk(KERN_ALERT "Read this proc file %d\n", length);
+    // Lock
+    mutex_lock(&access_lock);
+    // Wrapper func to access the registration list
+    _get_status(&length, kern_buf);
+    // Unlock
+    mutex_unlock(&access_lock);
+
+    printk(KERN_DEBUG "Read this proc file %d\n", length);
     kern_buf[length] = 0;
 
     // Copy returned data from kernel space to user space
@@ -161,18 +201,54 @@ static const struct file_operations mp1_proc_fops = {
 
 // Timer updating handler
 static void timer_handler(unsigned long data) {
-    unsigned long j = jiffies;
-    printk(KERN_DEBUG "time handling here %lu\n", j);
+    /*unsigned long j = jiffies;*/
+    /*printk(KERN_DEBUG "time handling here %lu\n", j/HZ);*/
 
+    // Allocate the work content
+    struct work_struct *update_work;
+    update_work = (struct work_struct *)kmalloc(sizeof(struct work_struct),
+	    		GFP_KERNEL);
+    // Declare the work content binded with the work function
+    INIT_WORK(update_work, work_handler);
+    queue_work(wq, update_work);
+
+    // Update the timer expires
     mod_timer(&update_timer, jiffies + five_sec);
 }
 
-// Work function for workqueue to schedule
+// Wrapper for work function without lock
+static void _work_handler(void) {
+    struct registration_block* cur, * temp;
+    int ret;
+    // Iterate the whole linked list to update each registered process 
+    // used cpu time
+    list_for_each_entry_safe(cur, temp, &registration_list, next) {
+	// Through the helper function to get the cpu used time
+	ret = get_cpu_use(cur->pid, &cur->used_time); 
+	if (ret != 0) {
+	   list_del(&cur->next);
+	   kfree(cur);
+	}
+    }
+}
 
+// Work function for workqueue to be scheduled
+static void work_handler(struct work_struct *work_arg) {
+    // Lock
+    mutex_lock(&access_lock);
+    // Wraper func
+    _work_handler();
+    // Unlock
+    mutex_unlock(&access_lock);
+
+    // Delocate the pointer to work content space
+    kfree(work_arg);
+
+    printk(KERN_DEBUG "Workqueue worker completed\n");
+}
 
 // mp1_init - Called when module is loaded
-int __init mp1_init(void)
-{
+int __init mp1_init(void) {
    #ifdef DEBUG
    printk(KERN_ALERT "MP1 MODULE LOADING\n");
    #endif
@@ -183,29 +259,49 @@ int __init mp1_init(void)
    // Initialize the timeout delay 
    five_sec = msecs_to_jiffies(5000 * 1);
    mod_timer(&update_timer, jiffies + five_sec);
+   // Initialize a new workqueue
+   wq = alloc_workqueue(UPDATE_WQ, WQ_MEM_RECLAIM, 0);
+   // Initialize a new mutex lock
+   mutex_init(&access_lock);
 
    printk(KERN_ALERT "MP1 MODULE LOADED\n");
    return 0;   
 }
 
+// Wrapper func for mp1_exit to delete and deallocate all resources
+static void _mp1_exit(void) {
+    struct registration_block* cur, * temp;
+    // Remove all entries of the registration list
+    list_for_each_entry_safe(cur, temp, &registration_list, next) {
+       // Access the entry and delete/free memory space
+       printk(KERN_DEBUG "PID %d: [%lu]\n", cur->pid, cur->used_time);
+       list_del(&cur->next);
+       kfree(cur);
+    }
+}
+
 // mp1_exit - Called when module is unloaded
-void __exit mp1_exit(void)
-{
-   struct registration_block* cur, * temp;
+void __exit mp1_exit(void) {
    #ifdef DEBUG
    printk(KERN_ALERT "MP1 MODULE UNLOADING\n");
    #endif
    // Remove all the proc file entry and dir we created before
    proc_remove(mp1_status);
    proc_remove(mp1_dir);
-
-   // Remove all entries of the registration list
-   list_for_each_entry_safe(cur, temp, &registration_list, next) {
-       // Access the entry and delete/free memory space
-       printk(KERN_ALERT "PID %d: [%lu]\n", cur->pid, cur->used_time);
-       list_del(&cur->next);
-       kfree(cur);
+   // Delete the kernel timer
+   del_timer(&update_timer);
+   // Destroy the workqueue
+   if (wq != NULL) {
+       flush_workqueue(wq);
+       destroy_workqueue(wq);
    }
+
+   // Lock
+   mutex_lock(&access_lock);
+   // Deallocate all needed resources
+   _mp1_exit();
+   // Unlock
+   mutex_unlock(&access_lock);
 
    printk(KERN_ALERT "MP1 MODULE UNLOADED\n");
 }
