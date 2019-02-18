@@ -178,6 +178,10 @@ ssize_t get_status(struct file *file,
     // Unlock
     mutex_unlock(&access_lock);
 
+    // If no pid registered in list
+    if (length == 0) 
+	length = sprintf(kern_buf, "No PID registered\n");
+
     printk(KERN_DEBUG "Read this proc file %d\n", length);
     kern_buf[length] = 0;
 
