@@ -28,9 +28,6 @@ static void pid_list() {
 
     // Open the proc file
     int fd = open("/proc/mp1/status", O_RDWR);
-    // Set non-blocking read
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     // Read the content of pid list from the proc file
     len = read(fd, buf, MAX_BUF_SIZE * sizeof(char));
@@ -51,7 +48,7 @@ int main(int argc, char* argv[])
     // Register the pid
     pid_register();
     // Do the factorial computation repeatedly
-    for (i = 1; i < 20000; i++) {
+    for (i = 1; i < 200000; i++) {
 	for (j = 1; j < 16; j++)
 	    printf("Factor of %d: %lu\n", j, factor(j));
     }
