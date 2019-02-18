@@ -1,7 +1,5 @@
 # CS423 MP1
 
-[TOC]
-
 # Introduce
 
 This the README document of the CS423 MP1, writen by Kechen Lu (kechenl3), is for introducing How-to and the basic implementation ideas of this machine problem.
