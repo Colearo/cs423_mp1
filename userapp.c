@@ -46,9 +46,9 @@ int main(int argc, char* argv[])
     // Register the pid
     pid_register();
     // Do the factorial computation repeatedly
-    for (i = 1; i < 50000; i++) {
+    for (i = 1; i < 10000; i++) {
 	for (j = 1; j < 16; j++)
-	    printf("Factor %lu\n", factor(j));
+	    printf("Factor of %d: %lu\n", j, factor(j));
     }
     // Print the pid list
     pid_list();
