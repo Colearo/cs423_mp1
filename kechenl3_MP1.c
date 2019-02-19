@@ -58,7 +58,7 @@ struct mutex access_lock;
 // Register the pid, which means to return error if has repeated,
 // and return 0 if the adding pid to linked list successfully.
 // This function is wraping function without lock
-static int _register_pid(int pid_val, unsigned long used_time) {
+static int __register_pid(int pid_val, unsigned long used_time) {
     // Linked list entry
     struct registration_block* new_block_ptr;
     struct registration_block* cur, * temp;
@@ -130,8 +130,11 @@ ssize_t register_pid(struct file *file,
     // Lock
     mutex_lock(&access_lock);
     // Wraper function for registration
-    if (_register_pid((int)pid_val, used_time) != 0) 
+    if (__register_pid((int)pid_val, used_time) != 0) {
+	// Unlock
+	mutex_unlock(&access_lock);
 	return -EFAULT;
+    }
     // Unlock
     mutex_unlock(&access_lock);
 
@@ -141,7 +144,7 @@ ssize_t register_pid(struct file *file,
 
 // Wraper function for reading callback to access the registration
 // linked list
-static void _get_status(int* length, char* kern_buf) {
+static void __get_status(int* length, char* kern_buf) {
     // Linked list entry
     struct registration_block* cur, * temp;
     // Iterate the whole linked list to output to the user space read buf
@@ -150,6 +153,7 @@ static void _get_status(int* length, char* kern_buf) {
 				cur->pid, cur->used_time);
     }
 }
+
 // Read callback function for user space to read the proc file in
 // /proc/mp1/status
 ssize_t get_status(struct file *file, 
@@ -174,7 +178,7 @@ ssize_t get_status(struct file *file,
     // Lock
     mutex_lock(&access_lock);
     // Wrapper func to access the registration list
-    _get_status(&length, kern_buf);
+    __get_status(&length, kern_buf);
     // Unlock
     mutex_unlock(&access_lock);
 
@@ -221,7 +225,7 @@ static void timer_handler(unsigned long data) {
 }
 
 // Wrapper for work function without lock
-static void _work_handler(void) {
+static void __work_handler(void) {
     struct registration_block* cur, * temp;
     int ret;
     // Iterate the whole linked list to update each registered process 
@@ -241,7 +245,7 @@ static void work_handler(struct work_struct *work_arg) {
     // Lock
     mutex_lock(&access_lock);
     // Wraper func
-    _work_handler();
+    __work_handler();
     // Unlock
     mutex_unlock(&access_lock);
 
@@ -273,7 +277,7 @@ int __init mp1_init(void) {
 }
 
 // Wrapper func for mp1_exit to delete and deallocate all resources
-static void _mp1_exit(void) {
+static void __mp1_exit(void) {
     struct registration_block* cur, * temp;
     // Remove all entries of the registration list
     list_for_each_entry_safe(cur, temp, &registration_list, next) {
