@@ -198,7 +198,6 @@ ssize_t get_status(struct file *file,
     return length;
 }
 
-
 // File operations callback functions, overload read, write, open, and 
 // so forth a series of ops
 static const struct file_operations mp1_proc_fops = {
@@ -307,7 +306,7 @@ void __exit mp1_exit(void) {
    // Lock
    mutex_lock(&access_lock);
    // Deallocate all needed resources
-   _mp1_exit();
+   __mp1_exit();
    // Unlock
    mutex_unlock(&access_lock);
 
