@@ -16,7 +16,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kechen Lu");
 MODULE_DESCRIPTION("CS-423 MP1");
 
-#define DEBUG 1
+#define DEBUG 0
 
 // Declare all needed global variables for the proc fs initializaiton
 // The mp1 directory
@@ -264,7 +264,9 @@ static void work_handler(struct work_struct *work_arg) {
     // Delocate the pointer to work content space
     kfree(work_arg);
 
+    #ifdef DEBUG
     printk(KERN_DEBUG "Workqueue worker completed\n");
+    #endif 
 }
 
 // mp1_init - Called when module is loaded
