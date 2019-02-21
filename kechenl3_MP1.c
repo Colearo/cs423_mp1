@@ -16,7 +16,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kechen Lu");
 MODULE_DESCRIPTION("CS-423 MP1");
 
-#define DEBUG 0
+// #define DEBUG 0
 
 // Declare all needed global variables for the proc fs initializaiton
 // The mp1 directory
