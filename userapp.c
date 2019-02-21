@@ -16,6 +16,7 @@ static void pid_register() {
     len = sprintf(buf, "%d", pid);
     write(fd, buf, len);
     printf("PID[%d]", pid);
+    free(buf);
 }
 
 // Read from the proc file to learn the pid numbers and its
@@ -33,6 +34,7 @@ static void pid_list() {
     len = read(fd, buf, MAX_BUF_SIZE * sizeof(char));
     // Print the buffer we read
     printf("%s", buf);
+    free(buf);
 }
 
 // Factorial computation
