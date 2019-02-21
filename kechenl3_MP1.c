@@ -103,10 +103,14 @@ ssize_t register_pid(struct file *file,
     memset(kern_buf, 0, MAX_BUF_SIZE * sizeof(char));
 
     // If the input str is larger than buffer, return error
-    if (n > MAX_BUF_SIZE || *ppos > 0) 
+    if (n > MAX_BUF_SIZE || *ppos > 0) {
+	kfree(kern_buf);
 	return -EFAULT;
-    if (copy_from_user(kern_buf, usr_buf, n))
+    }
+    if (copy_from_user(kern_buf, usr_buf, n)) {
+	kfree(kern_buf);
 	return -EFAULT;
+    }
 
     kern_buf[n] = 0;
     printk(KERN_DEBUG "ECHO %s", kern_buf); 
@@ -114,6 +118,7 @@ ssize_t register_pid(struct file *file,
     // Convert the pid string to the integer type
     ret = kstrtoul(kern_buf, 10, &pid_val);
     if (ret != 0 || pid_val >= ((1<<16)-1)) {
+	kfree(kern_buf);
 	printk(KERN_ALERT "Unrecognized pid number");
 	return -EFAULT;
     }
@@ -123,6 +128,7 @@ ssize_t register_pid(struct file *file,
     // Through the helper function to get the cpu used time
     ret = get_cpu_use((int)pid_val, &used_time); 
     if (ret != 0) {
+	kfree(kern_buf);
 	printk(KERN_ALERT "Unrecognized or invalid pid number\n");
 	return -EFAULT;
     }
@@ -133,6 +139,7 @@ ssize_t register_pid(struct file *file,
     if (__register_pid((int)pid_val, used_time) != 0) {
 	// Unlock
 	mutex_unlock(&access_lock);
+	kfree(kern_buf);
 	return -EFAULT;
     }
     // Unlock
@@ -172,8 +179,10 @@ ssize_t get_status(struct file *file,
 
     // If the input str is larger than buffer or 
     // someone has read it to let offset pointer is not to 0, return zero
-    if (n < MAX_BUF_SIZE || *ppos > 0) 
+    if (n < MAX_BUF_SIZE || *ppos > 0) {
+	kfree(kern_buf);
 	return 0;
+    }
 
     // Lock
     mutex_lock(&access_lock);
@@ -183,15 +192,19 @@ ssize_t get_status(struct file *file,
     mutex_unlock(&access_lock);
 
     // If no pid registered in list
-    if (length == 0) 
+    if (length == 0) {
+	kfree(kern_buf);
 	length = sprintf(kern_buf, "No PID registered\n");
+    }
 
     printk(KERN_DEBUG "Read this proc file %d\n", length);
     kern_buf[length] = 0;
 
     // Copy returned data from kernel space to user space
-    if (copy_to_user(usr_buf, (const void *)kern_buf, length))
+    if (copy_to_user(usr_buf, (const void *)kern_buf, length)) {
+	kfree(kern_buf);
 	return -EFAULT;
+    }
     *ppos = length;
 
     kfree(kern_buf);
